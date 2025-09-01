@@ -1,0 +1,43 @@
+# --- Go build artifacts ---
+/aish
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Binaries & release directories
+/bin/
+/build/
+/dist/
+/release/
+
+# Coverage & profiling
+coverage.*
+*.cov
+*.coverprofile
+*.lcov
+cpu.prof
+mem.prof
+profile.out
+pprof/
+
+# Logs & temp
+*.log
+*.tmp
+*.swp
+*~
+
+# IDE/editor
+.vscode/
+.idea/
+*.code-workspace
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Env/config (local-only)
+.env
+.env.*
