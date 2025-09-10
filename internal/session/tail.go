@@ -58,7 +58,7 @@ func readLastNLines(filePath string, n int, maxBytes int64) ([]string, error) {
 	// Split the logs into lines
 	lines = strings.Split(logs, "\n")
 
-	// Clean up empty lines at end (common with split)
+	// Clean up empty lines at end
 	if len(lines) > 0 && lines[len(lines)-1] == "" {
 		lines = lines[:len(lines)-1]
 	}
