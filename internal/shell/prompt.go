@@ -100,6 +100,37 @@ if [[ -n "$AISH_EXE" ]]; then
   function ai()   { "$AISH_EXE" __ai "$@"; }
   function snip() { "$AISH_EXE" __snip "$@"; }
 fi
+# --- aish: quick git branch helper
+__aish_git_branch() {
+  command -v git >/dev/null 2>&1 || return 0
+  git rev-parse --abbrev-ref HEAD 2>/dev/null | tr -d '\n'
+}
+
+# --- aish: log last command & exit to history.jsonl in precmd (after command finishes)
+__aish_precmd() {
+  local ec=$?  # exit of last command
+  local ts
+  ts=$(date -Is -u 2>/dev/null || date -u "+%Y-%m-%dT%H:%M:%SZ")
+  local cmd
+  cmd=$(fc -ln -1 2>/dev/null)
+  [[ -z "$cmd" ]] && return 0
+
+  # --- REMOVED THE FILTERING CASE STATEMENT ---
+  # Log ALL commands (including ai and snip)
+  local cwd="$PWD"
+  local git="$(__aish_git_branch)"
+  if [[ -n "$AISH_HISTORY_FILE" ]]; then
+    printf '{"ts":"%s","cwd":%q,"cmd":%q,"exit":%d,"git":%q}\n' "$ts" "$cwd" "$cmd" "$ec" "$git" >> "$AISH_HISTORY_FILE"
+  fi
+
+  if [[ -n "$AISH_STATE" ]]; then
+    print -r -- "$cmd" > "$AISH_STATE/last_cmd"
+    print -r -- "$ec"  > "$AISH_STATE/last_exit"
+  fi
+}
+
+autoload -Uz add-zsh-hook
+add-zsh-hook precmd __aish_precmd
 `
 	// Write the content to the temporary .zshrc file
 	if err := os.WriteFile(rcPath, []byte(content), 0644); err != nil {
@@ -141,6 +172,29 @@ if [ -n "$AISH_EXE" ]; then
   ai()   { "$AISH_EXE" __ai "$@"; }
   snip() { "$AISH_EXE" __snip "$@"; }
 fi
+
+# --- aish: log last command & exit to history.jsonl (before each prompt)
+__aish_log_cmd() {
+  local ec="$?"
+  local ts
+  ts=$(date -Is -u 2>/dev/null || date -u "+%Y-%m-%dT%H:%M:%SZ")
+  local cmd
+  cmd=$(fc -ln -1 2>/dev/null)
+  [ -z "$cmd" ] && return 0
+
+  # Log ALL commands (including ai and snip)
+  local cwd="$PWD"
+  local git="$(__aish_git_branch)"
+  if [ -n "$AISH_HISTORY_FILE" ]; then
+    printf '{"ts":"%s","cwd":%q,"cmd":%q,"exit":%d,"git":%q}\n' "$ts" "$cwd" "$cmd" "$ec" "$git" >> "$AISH_HISTORY_FILE"
+  fi
+
+  # refresh simple fallbacks
+  if [ -n "$AISH_STATE" ]; then
+    printf "%s\n" "$cmd" > "$AISH_STATE/last_cmd"
+    printf "%s\n" "$ec"  > "$AISH_STATE/last_exit"
+  fi
+}
 `
 	f, err := os.CreateTemp("", "aish-bashrc-*")
 	if err != nil {

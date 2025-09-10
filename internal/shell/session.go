@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/creack/pty"
 	"golang.org/x/term"
@@ -34,6 +35,55 @@ func (s *Session) Run() error {
 		exe = real
 	}
 
+	// Get or create the app data directory
+	// This is where session logs and other data will be stored.
+	// Default to ~/.aish
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("aish: cannot find home dir: %w", err)
+	}
+
+	// Define the app data directory path
+	aishAppData := filepath.Join(homeDir, ".aish")
+
+	// Create the app data directory if it doesn't exist
+	if _, err := os.Stat(aishAppData); os.IsNotExist(err) {
+		err := os.MkdirAll(aishAppData, 0o700)
+		if err != nil {
+			return fmt.Errorf("aish: cannot create app data dir %q: %w", aishAppData, err)
+		}
+	}
+
+	// Get DataTime including timestamp for session log folder (DD/MM/YYYY_timestamp)
+	// This ensures each session has a unique folder.
+	currentTime := time.Now()
+	timestamp := currentTime.Unix()
+	currentDate := currentTime.Format("20060102")
+
+	// Use PID to further ensure uniqueness
+	pid := os.Getpid()
+
+	// Folder name format: YYYYMMDD_timestamp_pid
+	folderName := fmt.Sprintf("%s_%d_%d", currentDate, timestamp, pid)
+
+	// Full session directory path
+	sessionDir := filepath.Join(aishAppData, folderName)
+
+	// Create the session directory
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		return fmt.Errorf("aish: cannot create session dir %q: %w", sessionDir, err)
+	}
+
+	// Create an empty history.jsonl file in the session directory
+	historyPath := filepath.Join(sessionDir, "history.jsonl")
+	// touch the file so it exists
+	if f, err := os.OpenFile(historyPath, os.O_CREATE, 0o600); err == nil {
+		_ = f.Close()
+	}
+
+	// Create an empty session.log file in the session directory
+	logPath := filepath.Join(sessionDir, "session.log")
+
 	// Build the shell command
 	cmd, cleanup, err := buildShellCommand(sh, shellName, exe)
 	if err != nil {
@@ -42,6 +92,15 @@ func (s *Session) Run() error {
 	if cleanup != nil {
 		defer cleanup()
 	}
+
+	// Set up environment variables for the shell session
+	// These inform the shell and other components about the session context.
+	// AISH_SESSION_LOG: path to the session log file
+	// AISH_HISTORY_FILE: path to the history file
+	cmd.Env = append(cmd.Env,
+		"AISH_SESSION_LOG="+logPath,
+		"AISH_HISTORY_FILE="+historyPath,
+	)
 
 	// Start the shell session
 	ptmx, err := pty.Start(cmd)
@@ -70,9 +129,20 @@ func (s *Session) Run() error {
 	}
 	defer func() { _ = term.Restore(int(os.Stdin.Fd()), oldState) }()
 
+	// Open the log file for appending
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return fmt.Errorf("open log: %w", err)
+	}
+	// Ensure the log file is closed when we're done
+	defer logFile.Close()
+
+	// Create a multi-writer to write both to stdout and the log file
+	out := io.MultiWriter(os.Stdout, logFile)
+
 	// Wire streams.
 	go func() { _, _ = io.Copy(ptmx, os.Stdin) }() // user → shell
-	_, _ = io.Copy(os.Stdout, ptmx)                // shell → screen
+	_, _ = io.Copy(out, ptmx)                      // shell → screen
 
 	// Propagate shell's exit code.
 	if err := cmd.Wait(); err != nil {

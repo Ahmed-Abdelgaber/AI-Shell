@@ -22,7 +22,7 @@ func (s *OpenAIService) Ask(ctx context.Context, userQuestion string, systemMess
 			openai.UserMessage(userQuestion),
 			openai.SystemMessage(systemMessage),
 		},
-		Model: openai.ChatModelGPT4o,
+		Model: openai.ChatModelGPT4oMini,
 	})
 	if err != nil {
 		return "", errors.New("failed to create completion: " + err.Error())
