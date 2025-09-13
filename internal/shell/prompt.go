@@ -93,45 +93,54 @@ func makeTempZshDir() (string, func(), error) {
 if [ -f "` + escapeShell(userRC) + `" ]; then
   source "` + escapeShell(userRC) + `"
 fi
+
 export AISH=1
 PROMPT="%B%F{cyan}[aish]%f%b ${PROMPT}"
+
 # aish shell functions
 if [[ -n "$AISH_EXE" ]]; then
   function ai()   { "$AISH_EXE" __ai "$@"; }
   function snip() { "$AISH_EXE" __snip "$@"; }
 fi
+
 # --- aish: quick git branch helper
 __aish_git_branch() {
   command -v git >/dev/null 2>&1 || return 0
   git rev-parse --abbrev-ref HEAD 2>/dev/null | tr -d '\n'
 }
 
-# --- aish: log last command & exit to history.jsonl in precmd (after command finishes)
-__aish_precmd() {
-  local ec=$?  # exit of last command
-  local ts
+# --- aish: JSON escaper
+__aish_json_escape() {
+  local s=$1
+  s=${s//\\/\\\\}; s=${s//\"/\\\"}
+  s=${s//$'\n'/\\n}; s=${s//$'\r'/\\r}; s=${s//$'\t'/\\t}
+  printf '%s' "$s"
+}
+
+# --- aish: common logger (we’ll call it from precmd)
+__aish_log_cmd() {
+  local ec=$? ts cmd cwd git
   ts=$(date -Is -u 2>/dev/null || date -u "+%Y-%m-%dT%H:%M:%SZ")
-  local cmd
-  cmd=$(fc -ln -1 2>/dev/null)
+  cmd=$(fc -ln -1 2>/dev/null) || return 0
   [[ -z "$cmd" ]] && return 0
-
-  # --- REMOVED THE FILTERING CASE STATEMENT ---
-  # Log ALL commands (including ai and snip)
-  local cwd="$PWD"
-  local git="$(__aish_git_branch)"
+  cmd="${cmd#"${cmd%%[!$' \t']*}"}"
+  cwd="$PWD"
+  git="$(__aish_git_branch)"
   if [[ -n "$AISH_HISTORY_FILE" ]]; then
-    printf '{"ts":"%s","cwd":%q,"cmd":%q,"exit":%d,"git":%q}\n' "$ts" "$cwd" "$cmd" "$ec" "$git" >> "$AISH_HISTORY_FILE"
-  fi
-
-  if [[ -n "$AISH_STATE" ]]; then
-    print -r -- "$cmd" > "$AISH_STATE/last_cmd"
-    print -r -- "$ec"  > "$AISH_STATE/last_exit"
+    printf '{"ts":"%s","cwd":"%s","cmd":"%s","exit":%d,"git":"%s"}\n' \
+      "$ts" "$(__aish_json_escape "$cwd")" \
+      "$(__aish_json_escape "$cmd")" \
+      "$ec" "$(__aish_json_escape "$git")" \
+      >> "$AISH_HISTORY_FILE"
   fi
 }
 
+# Hook into zsh's precmd (no PROMPT_COMMAND in zsh)
+__aish_precmd() { __aish_log_cmd }
 autoload -Uz add-zsh-hook
 add-zsh-hook precmd __aish_precmd
 `
+
 	// Write the content to the temporary .zshrc file
 	if err := os.WriteFile(rcPath, []byte(content), 0644); err != nil {
 		_ = os.RemoveAll(dir)
@@ -164,38 +173,62 @@ func makeTempBashRC() (string, func(), error) {
 if [ -f "` + escapeShell(userRC) + `" ]; then
   . "` + escapeShell(userRC) + `"
 fi
+
 export AISH=1
+set -o history
+shopt -s cmdhist
+
 if [ -z "$PS1" ]; then PS1="\u@\h:\w\$ "; fi
 PS1='\[\e[1;36m\][aish]\[\e[0m\] '"$PS1"
+
 # aish shell functions
 if [ -n "$AISH_EXE" ]; then
   ai()   { "$AISH_EXE" __ai "$@"; }
   snip() { "$AISH_EXE" __snip "$@"; }
 fi
 
+# --- aish: quick git branch helper (empty if not a repo)
+__aish_git_branch() {
+  command -v git >/dev/null 2>&1 || return 0
+  git rev-parse --abbrev-ref HEAD 2>/dev/null | tr -d '\n'
+}
+
+# --- aish: JSON escaper for safe JSON lines
+__aish_json_escape() {
+  local s=$1
+  s=${s//\\/\\\\}; s=${s//\"/\\\"}
+  s=${s//$'\n'/\\n}; s=${s//$'\r'/\\r}; s=${s//$'\t'/\\t}
+  printf '%s' "$s"
+}
+
 # --- aish: log last command & exit to history.jsonl (before each prompt)
 __aish_log_cmd() {
   local ec="$?"
-  local ts
+  local ts cmd cwd git
   ts=$(date -Is -u 2>/dev/null || date -u "+%Y-%m-%dT%H:%M:%SZ")
-  local cmd
-  cmd=$(fc -ln -1 2>/dev/null)
+  cmd=$(fc -ln -1 2>/dev/null) || return 0
   [ -z "$cmd" ] && return 0
+  # trim leading tabs/spaces that sometimes appear
+  cmd="${cmd#"${cmd%%[!$' \t']*}"}"
+  cwd="$PWD"
+  git="$(__aish_git_branch)"
 
-  # Log ALL commands (including ai and snip)
-  local cwd="$PWD"
-  local git="$(__aish_git_branch)"
   if [ -n "$AISH_HISTORY_FILE" ]; then
-    printf '{"ts":"%s","cwd":%q,"cmd":%q,"exit":%d,"git":%q}\n' "$ts" "$cwd" "$cmd" "$ec" "$git" >> "$AISH_HISTORY_FILE"
-  fi
-
-  # refresh simple fallbacks
-  if [ -n "$AISH_STATE" ]; then
-    printf "%s\n" "$cmd" > "$AISH_STATE/last_cmd"
-    printf "%s\n" "$ec"  > "$AISH_STATE/last_exit"
+    printf '{"ts":"%s","cwd":"%s","cmd":"%s","exit":%d,"git":"%s"}\n' \
+      "$ts" "$(__aish_json_escape "$cwd")" \
+      "$(__aish_json_escape "$cmd")" \
+      "$ec" "$(__aish_json_escape "$git")" \
+      >> "$AISH_HISTORY_FILE"
   fi
 }
+
+# Chain once into PROMPT_COMMAND (so the logger actually runs)
+case ";$PROMPT_COMMAND;" in
+  *";__aish_log_cmd;"*) ;;
+  *) PROMPT_COMMAND="__aish_log_cmd; $PROMPT_COMMAND" ;;
+esac
 `
+
 	f, err := os.CreateTemp("", "aish-bashrc-*")
 	if err != nil {
 		return "", nil, err

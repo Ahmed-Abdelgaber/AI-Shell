@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-func readLastNLines(filePath string, n int, maxBytes int64) ([]string, error) {
+func ReadLastNLines(filePath string, n int, maxBytes int64) ([]string, error) {
 	// Validate inputs
 	if n <= 0 || maxBytes <= 0 {
 		return []string{}, nil
