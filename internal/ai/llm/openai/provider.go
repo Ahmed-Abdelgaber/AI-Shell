@@ -11,7 +11,7 @@ import (
 func NewClient() (openai.Client, error) {
 	// Load the API key from environment variable
 	apiKey := os.Getenv("OPENAI_API_KEY")
-	// Check if the API key is set
+	// // Check if the API key is set
 	if apiKey == "" {
 		// If the API key is not set, return an error
 		return openai.Client{}, errors.New("OPENAI_API_KEY environment variable is not set")

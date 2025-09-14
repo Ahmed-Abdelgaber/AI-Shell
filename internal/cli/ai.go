@@ -3,7 +3,9 @@ package cli
 import (
 	"bufio"
 	"encoding/json"
+	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"regexp"
@@ -23,9 +25,9 @@ func handleAI(args []string) {
 	case "ask":
 		handleAsk(args[1:])
 	case "why":
-		handleWhy(args[1:])
+		handleWhy()
 	case "fix":
-		handleFix(args[1:])
+		handleFix()
 	default:
 		fmt.Printf("ai: unknown subcommand %q\n", args[0])
 	}
@@ -50,21 +52,63 @@ func printAIError(err error) {
 }
 
 func handleAsk(rest []string) {
+	// Create a flag set for parsing options
+	fs := flag.NewFlagSet("ai ask", flag.ContinueOnError)
+	// Define flags
+	includeContext := fs.Bool("c", false, "include recent command history as context")
+	_ = fs.Bool("context", false, "include recent command history as context")
+	// Suppress flag parsing errors to avoid cluttering output
+	fs.SetOutput(io.Discard)
+	// Parse flags
 	if len(rest) == 0 {
 		fmt.Println("usage: ai ask <question>")
 		return
 	}
+	if err := fs.Parse(rest); err != nil {
+		fmt.Println("usage: ai ask [-c|--context] <question>")
+		return
+	}
+	if err := fs.Parse(rest); err != nil {
+		fmt.Println("usage: ai ask [-c|--context] <question>")
+		return
+	}
+	args := fs.Args()
+	if len(args) == 0 {
+		fmt.Println("usage: ai ask [-c|--context] <question>")
+		return
+	}
+
+	// Remaining args are the question
 	question := strings.TrimSpace(strings.Join(rest, " "))
 	if question == "" {
 		fmt.Println("usage: ai ask <question>")
 		return
 	}
 
+	// If -c/--context is set, build session context
+	if *includeContext {
+		context, _, err := buildSessionContext()
+		if err != nil {
+			printAIError(err)
+			return
+		}
+
+		// Combine context and question
+		// We’ll format it as: "Given the following context from my recent terminal session, answer the question concisely.\n<context>\nQuestion: <question>"
+		// This helps the AI understand the context in which the question is asked.
+
+		question = fmt.Sprintf(`Given the following context from my recent terminal session, answer the question concisely.) \n %s \n Question: %s`, context, question)
+
+	}
+
+	// Ask the question using the AI service
 	out, err := ai.Ask(question)
 	if err != nil {
 		printAIError(err)
 		return
 	}
+
+	// Print the AI's response
 	fmt.Println(out)
 }
 
@@ -145,30 +189,42 @@ func getSessionLogs() ([]string, error) {
 	return logTails, nil
 }
 
-func buildSessionContext() (string, error) {
-	// Get session history lines
-	historyLines, err := getSessionHistoryLines()
-	if err != nil {
-		return "", err
-	}
-
-	// Parse history lines
-	history := parseHistoryJSONL(historyLines)
-
+func getLastCmdAndExit(history []histEntry) (string, int, bool) {
 	// Find last non-helper command
 	var lastCmd string = ""
 	var lastExit = -1
+	var isError bool = false
 	// Scan backwards
 	for i := len(history) - 1; i >= 0; i-- {
 		if !isHelper(history[i].Cmd) {
 			lastCmd = history[i].Cmd
 			lastExit = history[i].Exit
+			isError = lastExit != 0
 			break
 		}
 	}
+	return lastCmd, lastExit, isError
+}
+
+func buildSessionContext() (string, bool, error) {
+	// Get session history lines
+	historyLines, err := getSessionHistoryLines()
+	if err != nil {
+		return "", false, err
+	}
+
+	// Parse history lines
+	history := parseHistoryJSONL(historyLines)
+
+	lastCmd, lastExit, isError := getLastCmdAndExit(history)
+
+	if err := looksLikeFailure(lastCmd); err {
+		isError = true
+	}
+
 	// If none found, report and exit
 	if lastCmd == "" || lastExit == -1 {
-		return "", fmt.Errorf("no recent non-helper command found in history")
+		return "", false, fmt.Errorf("no recent non-helper command found in history")
 	}
 
 	// Build recent commands context (excluding helpers)
@@ -182,7 +238,7 @@ func buildSessionContext() (string, error) {
 
 	logTails, err := getSessionLogs()
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	logs := strings.Join(logTails, "\n")
 
@@ -193,7 +249,7 @@ Session logs (last %d lines):
 %s
 `, recentCmdsStr, lastCmd, lastExit, envIntDefault("AISH_TAIL_LINES", 120), logs)
 
-	return redact(recentBlock), nil
+	return redact(recentBlock), isError, nil
 }
 
 // redact attempts to remove sensitive information from a string.
@@ -232,14 +288,32 @@ func redact(s string) string {
 	return out
 }
 
-func handleWhy(rest []string) {
-	if len(rest) == 0 {
-		printAIUsage()
-		return
+func looksLikeFailure(s string) bool {
+	t := strings.ToLower(s)
+	keywords := []string{
+		"error", "failed", "fatal", "exception", "traceback",
+		"not found", "no such file or directory", "permission denied",
+		"invalid operation", "cannot", "unrecognized", "unknown command",
+	}
+	for _, kw := range keywords {
+		if strings.Contains(t, kw) {
+			return true
+		}
 	}
 
+	if strings.Contains(s, "\nE:") || strings.HasPrefix(s, "E:") {
+		return true
+	}
+	return false
+}
+
+func handleWhy() {
 	// Build session context
-	context, err := buildSessionContext()
+	context, _, err := buildSessionContext()
+	// if !isError {
+	// 	fmt.Println("[aish] Last command was not an error; nothing to explain.")
+	// 	return
+	// }
 	if err != nil {
 		printAIError(err)
 		return
@@ -253,14 +327,15 @@ func handleWhy(rest []string) {
 	fmt.Println(out)
 }
 
-func handleFix(rest []string) {
-	if len(rest) == 0 {
-		printAIUsage()
-		return
-	}
+func handleFix() {
 
 	// Build session context
-	context, err := buildSessionContext()
+	context, _, err := buildSessionContext()
+
+	// if !isError {
+	// 	fmt.Println("[aish] Last command was not an error; nothing to fix.")
+	// 	return
+	// }
 	if err != nil {
 		printAIError(err)
 		return

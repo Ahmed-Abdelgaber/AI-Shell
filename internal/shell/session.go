@@ -1,12 +1,14 @@
 package shell
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"syscall"
 	"time"
 
@@ -138,7 +140,7 @@ func (s *Session) Run() error {
 	defer logFile.Close()
 
 	// Create a multi-writer to write both to stdout and the log file
-	out := io.MultiWriter(os.Stdout, logFile)
+	out := io.MultiWriter(os.Stdout, newCleanWriter(logFile))
 
 	// Wire streams.
 	go func() { _, _ = io.Copy(ptmx, os.Stdin) }() // user → shell
@@ -152,4 +154,47 @@ func (s *Session) Run() error {
 		return fmt.Errorf("shell error: %w", err)
 	}
 	return nil
+}
+
+var ansiRE = regexp.MustCompile(`\x1B\[[0-9;?]*[ -/]*[@-~]`)
+
+type cleanWriter struct{ w io.Writer }
+
+func newCleanWriter(w io.Writer) *cleanWriter { return &cleanWriter{w: w} }
+
+func (cw *cleanWriter) Write(p []byte) (int, error) {
+	// work on a copy
+	b := append([]byte(nil), p...)
+
+	// normalize CRLF/CR to LF
+	b = bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n"))
+	b = bytes.ReplaceAll(b, []byte("\r"), []byte("\n"))
+
+	// strip ANSI escapes
+	b = ansiRE.ReplaceAll(b, nil)
+
+	// collapse backspaces
+	// (rune-safe so multi-byte chars aren’t broken)
+	rs := bytes.Runes(b)
+	out := make([]rune, 0, len(rs))
+	for _, r := range rs {
+		if r == '\b' {
+			if len(out) > 0 {
+				out = out[:len(out)-1]
+			}
+			continue
+		}
+		out = append(out, r)
+	}
+	cleaned := []byte(string(out))
+
+	// ensure valid UTF-8
+	cleaned = bytes.ToValidUTF8(cleaned, []byte{'?'})
+
+	// write cleaned bytes to the underlying file
+	if _, err := cw.w.Write(cleaned); err != nil {
+		return 0, err
+	}
+	// report that we consumed len(p) so io.Copy doesn't retry
+	return len(p), nil
 }
