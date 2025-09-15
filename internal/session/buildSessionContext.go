@@ -23,7 +23,7 @@ func BuildSessionContext() (string, bool, error) {
 	}
 
 	// Parse history lines
-	history := utils.ParseJSONL[histEntry](historyLines, func(e histEntry) bool { return e.Cmd != "" })
+	history := utils.ParseJSONL(historyLines, func(e histEntry) bool { return e.Cmd != "" })
 
 	lastCmd, lastExit, isError := getLastCmdAndExit(history)
 
