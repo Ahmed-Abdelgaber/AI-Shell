@@ -8,6 +8,12 @@ import (
 	"github.com/mr-gaber/ai-shell/internal/utils"
 )
 
+/*
+GetSessionHistoryLines reads the configured history file, returning the most
+recent lines so higher-level helpers can construct context about prior shell
+activity. It validates the environment variable, tails the file with a size
+limit, and ensures a non-empty result.
+*/
 func GetSessionHistoryLines() ([]string, error) {
 	// Get history file from env
 	historyLinesReference := strings.TrimSpace(os.Getenv("AISH_HISTORY_FILE"))

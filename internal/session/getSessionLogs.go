@@ -8,6 +8,12 @@ import (
 	"github.com/mr-gaber/ai-shell/internal/utils"
 )
 
+/*
+GetSessionLogs tails the current session log file referenced by environment
+variables, returning the most recent lines capped by configurable limits. It
+helps surface relevant console output for tooling that builds execution
+context.
+*/
 func GetSessionLogs() ([]string, error) {
 	// Get session log file from env
 	sessionLogFile := strings.TrimSpace(os.Getenv("AISH_SESSION_LOG"))

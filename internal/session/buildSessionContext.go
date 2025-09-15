@@ -7,6 +7,19 @@ import (
 	"github.com/mr-gaber/ai-shell/internal/utils"
 )
 
+/*
+BuildSessionContext builds a context string from recent session history and logs.
+It returns the context string, a boolean indicating if the last command was an error,
+and any error encountered during the process.
+
+The context includes:
+- Recent commands (excluding helper commands)
+- The last command executed and its exit code
+- Recent session logs
+
+This context can be used to provide relevant information to AI queries about the session.
+*/
+
 type histEntry struct {
 	TS   string `json:"ts"`   // Timestamp
 	CWD  string `json:"cwd"`  // Current working directory

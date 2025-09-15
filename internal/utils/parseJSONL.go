@@ -5,6 +5,11 @@ import (
 	"strings"
 )
 
+/*
+ParseJSONL unmarshal each non-empty line into the generic type T and keeps the
+entries that satisfy the provided predicate. It offers a resilient way to work
+with line-delimited JSON that may contain whitespace or malformed records.
+*/
 func ParseJSONL[T any](lines []string, keep func(T) bool) []T {
 	out := make([]T, 0, len(lines))
 	for _, ln := range lines {
