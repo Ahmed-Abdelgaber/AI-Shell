@@ -2,6 +2,14 @@ package session
 
 import "strings"
 
+/*
+DangerousCommand returns true when the user-supplied command string matches
+patterns that represent obviously destructive or risky shell operations. The
+function normalizes the input, scans for known hazardous substrings (e.g. rm -rf
+or piping curl into sh), and treats multi-line or empty commands as dangerous so
+the caller can block or warn before execution.
+*/
+
 func DangerousCommand(cmd string) bool {
 	s := strings.ToLower(strings.TrimSpace(cmd))
 

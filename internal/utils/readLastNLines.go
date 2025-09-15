@@ -6,6 +6,11 @@ import (
 	"strings"
 )
 
+/*
+ReadLastNLines efficiently tails the given file, returning up to the last n
+lines without reading the entire contents. It caps the read size, normalizes
+line endings, and gracefully handles missing or empty files.
+*/
 func ReadLastNLines(filePath string, n int, maxBytes int64) ([]string, error) {
 	// Validate inputs
 	if n <= 0 || maxBytes <= 0 {

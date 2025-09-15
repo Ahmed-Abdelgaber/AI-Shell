@@ -81,6 +81,17 @@ func (s *Session) Run() error {
 		_ = f.Close()
 	}
 
+	//Create an empty snippets.yaml once
+	// snippetsPath := filepath.Join(aishAppData, "snippets.yaml")
+	// if _, err := os.Stat(snippetsPath); os.IsNotExist(err) {
+	// 	// touch the file so it exists
+	// 	if f, err := os.OpenFile(snippetsPath, os.O_CREATE, 0o600); err == nil {
+	// 		_ = f.Close()
+	// 	}
+	// } else if err != nil {
+	// 	return fmt.Errorf("aish: cannot check snippets file %q: %w", snippetsPath, err)
+	// }
+
 	// Create an empty session.log file in the session directory
 	logPath := filepath.Join(sessionDir, "session.log")
 
@@ -97,9 +108,11 @@ func (s *Session) Run() error {
 	// These inform the shell and other components about the session context.
 	// AISH_SESSION_LOG: path to the session log file
 	// AISH_HISTORY_FILE: path to the history file
+	// AISH_SNIPPETS_FILE: path to the snippets file
 	cmd.Env = append(cmd.Env,
 		"AISH_SESSION_LOG="+logPath,
 		"AISH_HISTORY_FILE="+historyPath,
+		"AISH_SNIPPETS_FILE="+snippetsPath,
 	)
 
 	// Start the shell session

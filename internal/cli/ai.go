@@ -11,6 +11,17 @@ import (
 	"github.com/mr-gaber/ai-shell/internal/shell"
 )
 
+/*
+Handle the 'ai' command and its subcommands.
+Subcommands:
+- ask <question> [-c|--context]: Ask a question, optionally including recent command history as context.
+- why: Explain the last error based on recent command history.
+- fix: Propose a fix for the last error based on recent command history.
+
+The 'ask' subcommand can take an optional flag to include recent command history as context for better answers.
+The 'why' and 'fix' subcommands rely on the last command being an error to provide relevant explanations or fixes.
+*/
+
 func handleAI(args []string) {
 	if len(args) == 0 || args[0] == "help" {
 		printAIUsage()

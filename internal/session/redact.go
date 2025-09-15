@@ -5,6 +5,12 @@ import (
 	"strings"
 )
 
+/*
+redact scans the provided string for patterns that resemble sensitive
+credentials or secrets and replaces them with generic placeholders. It
+preserves surrounding context while stripping data that should not be surfaced
+to logs or AI prompts.
+*/
 func redact(s string) string {
 	var (
 		// Regular expressions to match sensitive information patterns.
