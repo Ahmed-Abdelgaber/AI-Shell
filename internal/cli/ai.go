@@ -1,19 +1,14 @@
 package cli
 
 import (
-	"bufio"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
-	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/mr-gaber/ai-shell/internal/ai"
 	"github.com/mr-gaber/ai-shell/internal/session"
+	"github.com/mr-gaber/ai-shell/internal/shell"
 )
 
 func handleAI(args []string) {
@@ -87,7 +82,7 @@ func handleAsk(rest []string) {
 
 	// If -c/--context is set, build session context
 	if *includeContext {
-		context, _, err := buildSessionContext()
+		context, _, err := session.BuildSessionContext()
 		if err != nil {
 			printAIError(err)
 			return
@@ -112,204 +107,9 @@ func handleAsk(rest []string) {
 	fmt.Println(out)
 }
 
-// histEntry is a single entry in the session history log
-type histEntry struct {
-	TS   string `json:"ts"`   // Timestamp
-	CWD  string `json:"cwd"`  // Current working directory
-	Cmd  string `json:"cmd"`  // Command executed
-	Exit int    `json:"exit"` // Exit code
-	Git  string `json:"git"`  // Git branch (if any)
-}
-
-func parseHistoryJSONL(lines []string) []histEntry {
-	out := make([]histEntry, 0, len(lines))
-	for _, ln := range lines {
-		ln = strings.TrimSpace(ln)
-		if ln == "" {
-			continue
-		}
-		var e histEntry
-		if err := json.Unmarshal([]byte(ln), &e); err != nil && e.Cmd != "" {
-			continue
-		}
-		out = append(out, e)
-	}
-	return out
-}
-
-func isHelper(cmd string) bool {
-	t := strings.TrimSpace(cmd)
-	return strings.HasPrefix(t, "ai ") || strings.HasPrefix(t, "snip ")
-}
-
-func envIntDefault(name string, def int) int {
-	if v := strings.TrimSpace(os.Getenv(name)); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
-		}
-	}
-	return def
-}
-
-func getSessionHistoryLines() ([]string, error) {
-	// Get history file from env
-	historyLinesReference := strings.TrimSpace(os.Getenv("AISH_HISTORY_FILE"))
-	if historyLinesReference == "" {
-		return nil, fmt.Errorf("no session history available")
-	}
-
-	// Read last N lines from history file
-	historyLines, err := session.ReadLastNLines(historyLinesReference, envIntDefault("AISH_HISTORY_SIZE", 5)*3, 128<<10)
-	if err != nil {
-		return nil, fmt.Errorf("reading session history: %w", err)
-	}
-	if len(historyLines) == 0 {
-		return nil, fmt.Errorf("no session history available")
-	}
-	return historyLines, nil
-}
-
-func getSessionLogs() ([]string, error) {
-	// Get session log file from env
-	sessionLogFile := strings.TrimSpace(os.Getenv("AISH_SESSION_LOG"))
-	if sessionLogFile == "" {
-		return nil, fmt.Errorf("no session log available")
-	}
-
-	tailLines := envIntDefault("AISH_TAIL_LINES", 120)
-	tailBytes := envIntDefault("AISH_TAIL_MAX_BYTES", 256<<10)
-
-	logTails, err := session.ReadLastNLines(sessionLogFile, tailLines, int64(tailBytes))
-	if err != nil {
-		return nil, fmt.Errorf("reading session log: %w", err)
-	}
-	if len(logTails) == 0 {
-		return nil, fmt.Errorf("no session log available")
-	}
-	return logTails, nil
-}
-
-func getLastCmdAndExit(history []histEntry) (string, int, bool) {
-	// Find last non-helper command
-	var lastCmd string = ""
-	var lastExit = -1
-	var isError bool = false
-	// Scan backwards
-	for i := len(history) - 1; i >= 0; i-- {
-		if !isHelper(history[i].Cmd) {
-			lastCmd = history[i].Cmd
-			lastExit = history[i].Exit
-			isError = lastExit != 0
-			break
-		}
-	}
-	return lastCmd, lastExit, isError
-}
-
-func buildSessionContext() (string, bool, error) {
-	// Get session history lines
-	historyLines, err := getSessionHistoryLines()
-	if err != nil {
-		return "", false, err
-	}
-
-	// Parse history lines
-	history := parseHistoryJSONL(historyLines)
-
-	lastCmd, lastExit, isError := getLastCmdAndExit(history)
-
-	if err := looksLikeFailure(lastCmd); err {
-		isError = true
-	}
-
-	// If none found, report and exit
-	if lastCmd == "" || lastExit == -1 {
-		return "", false, fmt.Errorf("no recent non-helper command found in history")
-	}
-
-	// Build recent commands context (excluding helpers)
-	var recentCmds []string
-	recentN := envIntDefault("AISH_TAIL_LINES", 5)
-	for i := len(history) - 1; i >= 0 && len(recentCmds) < recentN; i-- {
-		e := history[i]
-		recentCmds = append(recentCmds, fmt.Sprintf("ts: %s (cmd: %s, cwd: %s, exit: %d)", e.TS, e.Cmd, e.CWD, e.Exit))
-	}
-	recentCmdsStr := strings.Join(recentCmds, "\n")
-
-	logTails, err := getSessionLogs()
-	if err != nil {
-		return "", false, err
-	}
-	logs := strings.Join(logTails, "\n")
-
-	recentBlock := fmt.Sprintf(`Recent commands (most recent first): %s
-Last command: %s
-Exit code: %d	
-Session logs (last %d lines):
-%s
-`, recentCmdsStr, lastCmd, lastExit, envIntDefault("AISH_TAIL_LINES", 120), logs)
-
-	return redact(recentBlock), isError, nil
-}
-
-// redact attempts to remove sensitive information from a string.
-func redact(s string) string {
-	var (
-		// Regular expressions to match sensitive information patterns.
-		// These patterns include private keys, bearer tokens, API keys, long hex strings,
-		rePrivKey = regexp.MustCompile(`-----BEGIN [A-Z ]+PRIVATE KEY-----[.\s\S]+?-----END [A-Z ]+PRIVATE KEY-----`)
-		// long base64 strings, and environment variable assignments.
-		reBearer = regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9\-\._~\+/]+=*`)
-		// The patterns are designed to catch common formats of sensitive data.
-		reAPIKey = regexp.MustCompile(`(?i)(api|token|secret|key)\s*[:=]\s*["']?[A-Za-z0-9_\-\.]{12,}["']?`)
-		// Long hex strings (24 or more hex characters)
-		reHexLong = regexp.MustCompile(`\b[0-9A-Fa-f]{24,}\b`)
-		// Long base64 strings (32 or more base64 characters)
-		reB64Long = regexp.MustCompile(`\b[A-Za-z0-9+/]{32,}={0,2}\b`)
-		// Environment variable assignment lines (e.g., VAR=value)
-		reEnvLine = regexp.MustCompile(`(?m)^(?:[A-Z0-9_]{3,})\s*=\s*.+$`)
-	)
-
-	if s == "" {
-		return s
-	}
-	out := s
-	out = rePrivKey.ReplaceAllString(out, "[REDACTED_PRIVATE_KEY]")
-	out = reBearer.ReplaceAllString(out, "Bearer [REDACTED]")
-	out = reAPIKey.ReplaceAllString(out, "$1: [REDACTED]")
-	out = reHexLong.ReplaceAllString(out, "[HEX_REDACTED]")
-	out = reB64Long.ReplaceAllString(out, "[B64_REDACTED]")
-	out = reEnvLine.ReplaceAllStringFunc(out, func(line string) string {
-		if i := strings.Index(line, "="); i > 0 {
-			return line[:i+1] + " [REDACTED]"
-		}
-		return line
-	})
-	return out
-}
-
-func looksLikeFailure(s string) bool {
-	t := strings.ToLower(s)
-	keywords := []string{
-		"error", "failed", "fatal", "exception", "traceback",
-		"not found", "no such file or directory", "permission denied",
-		"invalid operation", "cannot", "unrecognized", "unknown command",
-	}
-	for _, kw := range keywords {
-		if strings.Contains(t, kw) {
-			return true
-		}
-	}
-
-	if strings.Contains(s, "\nE:") || strings.HasPrefix(s, "E:") {
-		return true
-	}
-	return false
-}
-
 func handleWhy() {
 	// Build session context
-	context, _, err := buildSessionContext()
+	context, _, err := session.BuildSessionContext()
 	// if !isError {
 	// 	fmt.Println("[aish] Last command was not an error; nothing to explain.")
 	// 	return
@@ -330,7 +130,7 @@ func handleWhy() {
 func handleFix() {
 
 	// Build session context
-	context, _, err := buildSessionContext()
+	context, _, err := session.BuildSessionContext()
 
 	// if !isError {
 	// 	fmt.Println("[aish] Last command was not an error; nothing to fix.")
@@ -362,82 +162,22 @@ func handleFix() {
 		fmt.Println("[aish] No runnable command was suggested.")
 		return
 	}
-	if dangerousCommand(command) {
+	if session.DangerousCommand(command) {
 		fmt.Println("[aish] This command looks dangerous; refusing to auto-run.")
 		return
 	}
-	if startsWithBuiltinThatWontPersist(command) {
+	if session.StartsWithBuiltinThatWontPersist(command) {
 		fmt.Println("[aish] Note: builtins like 'cd'/'export' won’t change your parent shell; I won’t auto-run them.")
 		return
 	}
 
 	// Confirm & execute
 	fmt.Print("[aish] Run it now? [y/N] ")
-	yes := confirmFromStdin()
+	yes := shell.ConfirmFromStdin()
 	if !yes {
 		return
 	}
-	if err := runInUserShell(command); err != nil {
+	if err := shell.RunInUserShell(command); err != nil {
 		fmt.Println("[aish] run error:", err)
 	}
-}
-
-func confirmFromStdin() bool {
-	in := bufio.NewReader(os.Stdin)
-	line, _ := in.ReadString('\n')
-	line = strings.ToLower(strings.TrimSpace(line))
-	return line == "y" || line == "yes"
-}
-
-func runInUserShell(cmdline string) error {
-	sh := os.Getenv("SHELL")
-	if sh == "" {
-		sh = "/bin/bash"
-	}
-	// -l would make a login shell; we only need -c and a clean command env.
-	cmd := exec.Command(sh, "-lc", cmdline)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-	cmd.Env = os.Environ()
-	return cmd.Run()
-}
-
-// Conservative danger checks (v1). We’ll expand over time.
-func dangerousCommand(cmd string) bool {
-	s := strings.ToLower(strings.TrimSpace(cmd))
-
-	// obviously destructive
-	if strings.Contains(s, "rm -rf /") || strings.Contains(s, "rm -rf ~") {
-		return true
-	}
-	if strings.Contains(s, ":(){ :|:& };:") { // fork bomb
-		return true
-	}
-	if strings.Contains(s, "mkfs") || strings.Contains(s, " dd ") || strings.Contains(s, " dd if=") || strings.Contains(s, " of=/dev/") {
-		return true
-	}
-	if strings.Contains(s, "chmod -r 777 /") || strings.Contains(s, "chown -r ") && strings.Contains(s, " /") {
-		return true
-	}
-	if strings.Contains(s, "curl") && strings.Contains(s, "|") && strings.Contains(s, "sh") {
-		return true
-	}
-	if strings.Contains(s, "wget") && strings.Contains(s, "|") && strings.Contains(s, "sh") {
-		return true
-	}
-	if strings.HasPrefix(s, "docker system prune -a") {
-		return true
-	}
-	// multi-line or empty
-	if strings.Contains(s, "\n") || s == "" {
-		return true
-	}
-	return false
-}
-
-func startsWithBuiltinThatWontPersist(cmd string) bool {
-	s := strings.TrimSpace(cmd)
-	// Commands that only change the current shell process
-	return strings.HasPrefix(s, "cd ") || strings.HasPrefix(s, "export ") || s == "cd" || strings.HasPrefix(s, "alias ")
 }
