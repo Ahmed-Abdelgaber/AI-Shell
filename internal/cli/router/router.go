@@ -4,6 +4,7 @@ import (
 	"github.com/mr-gaber/ai-shell/internal/cli/ai"
 	clipsnip "github.com/mr-gaber/ai-shell/internal/cli/snip"
 	"github.com/mr-gaber/ai-shell/internal/config"
+	"github.com/mr-gaber/ai-shell/internal/ux/printer"
 )
 
 // Router dispatches internal commands to their handlers based on argv.
@@ -12,10 +13,10 @@ type Router struct {
 	snip *clipsnip.Handler
 }
 
-func New(cfg config.Config) *Router {
+func New(cfg config.Config, p *printer.Printer) *Router {
 	return &Router{
-		ai:   ai.New(cfg),
-		snip: clipsnip.New(cfg),
+		ai:   ai.New(cfg, p),
+		snip: clipsnip.New(cfg, p),
 	}
 }
 

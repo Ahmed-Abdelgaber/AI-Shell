@@ -7,19 +7,23 @@ import (
 	"github.com/mr-gaber/ai-shell/internal/cli/router"
 	"github.com/mr-gaber/ai-shell/internal/config"
 	"github.com/mr-gaber/ai-shell/internal/shell/launcher"
+	"github.com/mr-gaber/ai-shell/internal/ux/printer"
 	"golang.org/x/term"
 )
 
 type App struct {
-	cfg    config.Config
-	router *router.Router
+	cfg     config.Config
+	router  *router.Router
+	printer *printer.Printer
 }
 
 func New() *App {
 	cfg := config.LoadFromEnv()
+	p := printer.New(os.Stdout, os.Stderr)
 	return &App{
-		cfg:    cfg,
-		router: router.New(cfg),
+		cfg:     cfg,
+		router:  router.New(cfg, p),
+		printer: p,
 	}
 }
 

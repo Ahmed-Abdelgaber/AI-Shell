@@ -9,27 +9,30 @@ import (
 	ainternal "github.com/mr-gaber/ai-shell/internal/ai"
 	"github.com/mr-gaber/ai-shell/internal/cli/shared"
 	"github.com/mr-gaber/ai-shell/internal/config"
+	"github.com/mr-gaber/ai-shell/internal/errs"
 	sessionbuiltins "github.com/mr-gaber/ai-shell/internal/session/builtins"
 	sessioncontext "github.com/mr-gaber/ai-shell/internal/session/context"
 	sessiondanger "github.com/mr-gaber/ai-shell/internal/session/danger"
 	"github.com/mr-gaber/ai-shell/internal/shell"
 	"github.com/mr-gaber/ai-shell/internal/shell/runner"
+	"github.com/mr-gaber/ai-shell/internal/ux/printer"
 )
 
 // Handler processes ai subcommands parsed by the router.
 type Handler struct {
-	cfg    config.Config
-	svc    *ainternal.Service
-	svcErr error
+	cfg     config.Config
+	svc     *ainternal.Service
+	svcErr  error
+	printer *printer.Printer
 }
 
-func New(cfg config.Config) *Handler {
-	return &Handler{cfg: cfg}
+func New(cfg config.Config, p *printer.Printer) *Handler {
+	return &Handler{cfg: cfg, printer: p}
 }
 
 func (h *Handler) Handle(args []string) {
 	if len(args) == 0 || args[0] == "help" {
-		shared.PrintUsage(`ai usage:
+		shared.PrintUsage(h.printer, `ai usage:
   ai ask <question> // Ask a question
   ai why    // Explain the last error
   ai fix   // Propose a fix for the last error
@@ -56,7 +59,15 @@ func (h *Handler) printError(err error) {
 
 	msg := strings.ToLower(err.Error())
 	if strings.Contains(msg, "openai_api_key") || strings.Contains(msg, "no api key") {
-		fmt.Println("[aish] No AI configured. Set OPENAI_API_KEY to use 'ai' commands.")
+		if h.printer != nil {
+			h.printer.Warn("[aish] No AI configured. Set OPENAI_API_KEY to use 'ai' commands.")
+		} else {
+			fmt.Println("[aish] No AI configured. Set OPENAI_API_KEY to use 'ai' commands.")
+		}
+		return
+	}
+	if h.printer != nil {
+		h.printer.Error(err)
 		return
 	}
 	fmt.Println("ai:", err.Error())
@@ -69,23 +80,23 @@ func (h *Handler) handleAsk(rest []string) {
 	fs.SetOutput(io.Discard)
 
 	if len(rest) == 0 {
-		fmt.Println("usage: ai ask <question>")
+		h.info("usage: ai ask <question>")
 		return
 	}
 	if err := fs.Parse(rest); err != nil {
-		fmt.Println("usage: ai ask [-c|--context] <question>")
+		h.info("usage: ai ask [-c|--context] <question>")
 		return
 	}
 
 	args := fs.Args()
 	if len(args) == 0 {
-		fmt.Println("usage: ai ask [-c|--context] <question>")
+		h.info("usage: ai ask [-c|--context] <question>")
 		return
 	}
 
 	question := strings.TrimSpace(strings.Join(rest, " "))
 	if question == "" {
-		fmt.Println("usage: ai ask <question>")
+		h.info("usage: ai ask <question>")
 		return
 	}
 
@@ -111,7 +122,7 @@ func (h *Handler) handleAsk(rest []string) {
 		return
 	}
 
-	fmt.Println(out)
+	h.info(out)
 }
 
 func (h *Handler) handleWhy() {
@@ -132,7 +143,7 @@ func (h *Handler) handleWhy() {
 		h.printError(err)
 		return
 	}
-	fmt.Println(out)
+	h.info(out)
 }
 
 func (h *Handler) handleFix() {
@@ -154,21 +165,21 @@ func (h *Handler) handleFix() {
 		return
 	}
 
-	fmt.Println(out)
+	h.info(out)
 
 	command := strings.TrimPrefix(out, "COMMAND: ")
 	command = strings.Split(command, "\n")[0]
 
 	if strings.TrimSpace(command) == "" {
-		fmt.Println("[aish] No runnable command was suggested.")
+		h.warn("[aish] No runnable command was suggested.")
 		return
 	}
 	if sessiondanger.IsDangerous(command) {
-		fmt.Println("[aish] This command looks dangerous; refusing to auto-run.")
+		h.warn("[aish] This command looks dangerous; refusing to auto-run.")
 		return
 	}
 	if sessionbuiltins.IsNonPersisting(command) {
-		fmt.Println("[aish] Note: builtins like 'cd'/'export' won’t change your parent shell; I won’t auto-run them.")
+		h.warn("[aish] Note: builtins like 'cd'/'export' won’t change your parent shell; I won’t auto-run them.")
 		return
 	}
 
@@ -178,13 +189,33 @@ func (h *Handler) handleFix() {
 		return
 	}
 	if err := runner.Run(command); err != nil {
-		fmt.Println("[aish] run error:", err)
+		if h.printer != nil {
+			h.printer.Error(errs.Wrap(err, "ai-run", "[aish] run error"))
+		} else {
+			fmt.Println("[aish] run error:", err)
+		}
 	}
 }
 
 func (h *Handler) buildContext() (string, bool, error) {
 	builder := sessioncontext.NewBuilder(h.cfg)
 	return builder.Build()
+}
+
+func (h *Handler) info(msg string) {
+	if h.printer != nil {
+		h.printer.Info(msg)
+		return
+	}
+	fmt.Println(msg)
+}
+
+func (h *Handler) warn(msg string) {
+	if h.printer != nil {
+		h.printer.Warn(msg)
+		return
+	}
+	fmt.Println(msg)
 }
 
 func (h *Handler) service() (*ainternal.Service, error) {

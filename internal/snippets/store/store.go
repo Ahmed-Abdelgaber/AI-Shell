@@ -106,9 +106,11 @@ func (s *Store) DeleteOne(name string) error {
 
 	_, ok := db[name]
 
-	if ok {
-		delete(db, name)
+	if !ok {
+		return fmt.Errorf("[aish]: Cannot find this snippet")
 	}
+
+	delete(db, name)
 
 	if _, err := s.Save(db); err != nil {
 		return err
