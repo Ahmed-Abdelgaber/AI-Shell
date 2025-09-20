@@ -3,57 +3,32 @@ package ai
 import (
 	"context"
 	"strings"
+
+	"github.com/mr-gaber/ai-shell/internal/ai/prompts"
+	"github.com/mr-gaber/ai-shell/internal/ai/providers"
+	"github.com/mr-gaber/ai-shell/internal/config"
 )
 
-var aiProvider, providerErr = NewAIProvider()
-
-func Ask(question string) (answer string, err error) {
-	// Prepare the context and messages for the AI provider.
-	ctx := context.Background()
-	// Prepare system and user messages.
-	// The system message sets the behavior of the AI assistant.
-	// The user message contains the actual question to be answered.
-	sys := "You are AISH, a terse terminal assistant. Prefer one good command with a one-line explanation. Be concise."
-	user := strings.TrimSpace(question)
-	// Initialize the AI provider.
-	// aiProvider, err := NewAIProvider()
-	if providerErr != nil {
-		return "", providerErr
-	}
-	// Ask the question using the AI provider.
-	return aiProvider.Ask(ctx, user, sys)
+type Service struct {
+	provider providers.Provider
 }
 
-func Why(tail string) (string, error) {
-	// Prepare the context and messages for the AI provider.
-	ctx := context.Background()
-	// Prepare system and user messages.
-	// The system message sets the behavior of the AI assistant.
-	// The user message contains the actual question to be answered.
-	sys := "You are AISH. Propose ONE safe fix command and a one-sentence rationale. Output strictly in the following format:\nCOMMAND: <single-line>\nWHY: <one sentence>"
-	user := tail
-	// Initialize the AI provider.
-	// aiProvider, err := NewAIProvider()
-	if providerErr != nil {
-		return "", providerErr
+func NewService(cfg config.Config) (*Service, error) {
+	p, err := providers.FromConfig(cfg)
+	if err != nil {
+		return nil, err
 	}
-	// Ask the question using the AI provider.
-	return aiProvider.Ask(ctx, user, sys)
+	return &Service{provider: p}, nil
 }
 
-func Fix(tail string) (string, error) {
-	// Prepare the context and messages for the AI provider.
-	ctx := context.Background()
-	// Prepare system and user messages.
-	// The system message sets the behavior of the AI assistant.
-	// The user message contains the actual question to be answered.
-	sys := "You are AISH. Propose ONE safe fix command and a one-sentence rationale. Output strictly in the following format:\nCOMMAND: <single-line>\nWHY: <one sentence>"
-	user := tail
-	// Initialize the AI provider.
-	// aiProvider, err := NewAIProvider()
-	if providerErr != nil {
-		return "", providerErr
-	}
-	// Ask the question using the AI provider.
-	return aiProvider.Ask(ctx, user, sys)
+func (s *Service) Ask(question string) (string, error) {
+	return s.provider.Ask(context.Background(), strings.TrimSpace(question), prompts.AskSystem)
+}
+
+func (s *Service) Why(contextText string) (string, error) {
+	return s.provider.Ask(context.Background(), contextText, prompts.WhySystem)
+}
+
+func (s *Service) Fix(contextText string) (string, error) {
+	return s.provider.Ask(context.Background(), contextText, prompts.FixSystem)
 }
