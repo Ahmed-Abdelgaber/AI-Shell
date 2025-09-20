@@ -6,8 +6,10 @@ toolchain go1.24.6
 
 require (
 	github.com/creack/pty v1.1.24
+	github.com/deckarep/golang-set/v2 v2.8.0
 	github.com/openai/openai-go/v2 v2.4.0
 	golang.org/x/term v0.34.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
