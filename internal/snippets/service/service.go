@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mr-gaber/ai-shell/internal/errs"
 	"github.com/mr-gaber/ai-shell/internal/snippets/model"
 	"github.com/mr-gaber/ai-shell/internal/snippets/parser"
 	"github.com/mr-gaber/ai-shell/internal/snippets/store"
@@ -21,7 +22,7 @@ type Service struct {
 
 func New(path string) (*Service, error) {
 	if strings.TrimSpace(path) == "" {
-		return nil, fmt.Errorf("[aish] Cannot find snippets yaml file")
+		return nil, errs.New("snip-no-path", "[aish] Cannot find snippets yaml file")
 	}
 	return &Service{store: store.New(path)}, nil
 }
@@ -34,17 +35,17 @@ func (s *Service) Add(name string, raw string, force bool) (bool, []string, erro
 	if !force {
 		exists, err := s.store.Exists(name)
 		if err != nil {
-			return false, nil, err
+			return false, nil, errs.Wrap(err, "snip-store-exists", "failed to inspect snippets store")
 		}
 		if exists {
-			return false, nil, fmt.Errorf("[aish] snippet %q already exists. Use --force to overwrite", name)
+			return false, nil, errs.New("snip-exists", fmt.Sprintf("[aish] snippet %q already exists. Use --force to overwrite", name))
 		}
 	}
 
 	lines := parser.Normalize(raw)
 	script, err := parser.Build(lines)
 	if err != nil {
-		return false, nil, err
+		return false, nil, errs.Wrap(err, "snip-parse", "failed to build snippet script")
 	}
 
 	now := time.Now()
@@ -59,7 +60,7 @@ func (s *Service) Add(name string, raw string, force bool) (bool, []string, erro
 
 	created, err := s.store.Create(name, snippet)
 	if err != nil {
-		return created, nil, err
+		return created, nil, errs.Wrap(err, "snip-store-save", "failed to persist snippet")
 	}
 	return created, script.Warnings, nil
 }
@@ -67,18 +68,21 @@ func (s *Service) Add(name string, raw string, force bool) (bool, []string, erro
 func (s *Service) Run(name string, vars []string) error {
 	snip, err := s.store.GetOne(name)
 	if err != nil {
-		return err
+		return errs.Wrap(err, "snip-missing", "failed to load snippet", errs.WithFields(map[string]string{"name": name}))
 	}
 
 	varsMap := map[string]string{}
 
 	for _, v := range vars {
-		varString := strings.Split(v, "=")
+		varString := strings.SplitN(v, "=", 2)
 		if len(varString) != 2 {
-			return fmt.Errorf("[aish]:Error at %s Expected variable_name=value", v)
+			return errs.New("snip-var-format", fmt.Sprintf("[aish] invalid variable format %q (expected name=value)", v))
 		}
-		varName := varString[0]
+		varName := strings.TrimSpace(varString[0])
 		varValue := varString[1]
+		if varName == "" {
+			return errs.New("snip-var-name", fmt.Sprintf("[aish] invalid variable name in %q", v))
+		}
 		varsMap[varName] = varValue
 	}
 
@@ -90,7 +94,7 @@ func (s *Service) Run(name string, vars []string) error {
 			}
 		}
 
-		return fmt.Errorf("[aish]: Missing Variables %s", strings.Join(missingVars, ","))
+		return errs.New("snip-missing-vars", fmt.Sprintf("[aish] missing variables %s", strings.Join(missingVars, ",")))
 	}
 
 	for i := range snip.Steps {
@@ -115,14 +119,14 @@ func (s *Service) Run(name string, vars []string) error {
 			cmd := exec.Command("/bin/sh", "-c", step.Cmd)
 			cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 			if err := cmd.Run(); err != nil {
-				return fmt.Errorf("[aish]:Error at Line: %d \n Command: %s", i, step.Cmd)
+				return errs.Wrap(err, "snip-step-cmd", "[aish] command failed", errs.WithFields(map[string]string{"line": fmt.Sprintf("%d", i+1), "command": step.Cmd}))
 			}
 		} else {
 			fmt.Println(step.Exec)
 			cmd := exec.Command(step.Exec[0], step.Exec[1:]...)
 			cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 			if err := cmd.Run(); err != nil {
-				return fmt.Errorf("[aish]:Error at Line: %d \n Command: %s", i, strings.Join(step.Exec, " "))
+				return errs.Wrap(err, "snip-step-exec", "[aish] command failed", errs.WithFields(map[string]string{"line": fmt.Sprintf("%d", i+1), "command": strings.Join(step.Exec, " ")}))
 			}
 		}
 	}
@@ -133,7 +137,7 @@ func (s *Service) Run(name string, vars []string) error {
 func (s *Service) View(name string) error {
 	snip, err := s.store.GetOne(name)
 	if err != nil {
-		return err
+		return errs.Wrap(err, "snip-missing", "failed to load snippet", errs.WithFields(map[string]string{"name": name}))
 	}
 
 	fmt.Printf("snippet: %s\n", name)
@@ -161,7 +165,7 @@ func (s *Service) View(name string) error {
 func (s *Service) List() error {
 	snips, err := s.store.LoadAll()
 	if err != nil {
-		return err
+		return errs.Wrap(err, "snip-list", "failed to read snippets")
 	}
 
 	names := slices.Collect(maps.Keys(snips))
@@ -174,5 +178,8 @@ func (s *Service) List() error {
 }
 
 func (s *Service) Delete(name string) error {
-	return s.store.DeleteOne(name)
+	if err := s.store.DeleteOne(name); err != nil {
+		return errs.Wrap(err, "snip-delete", "failed to delete snippet", errs.WithFields(map[string]string{"name": name}))
+	}
+	return nil
 }
